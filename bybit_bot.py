@@ -111,18 +111,30 @@ class TradingBot:
 
     def calculate_indicators(self, df):
         try:
-            if df.empty or len(df) < max(Config.ATR_PERIOD, Config.RSI_PERIOD, Config.TREND_MA_PERIOD):
+            min_periods = max(
+                Config.ATR_PERIOD, Config.RSI_PERIOD, Config.TREND_MA_PERIOD
+            )
+            if df.empty or len(df) < min_periods:
                 logger.warning("Недостаточно данных для расчета индикаторов")
                 return (None,) * 6
 
-            self.prev_prices = df["close"].tail(Config.MOMENTUM_PERIOD+1).tolist()
+            self.prev_prices = df["close"].tail(
+                Config.MOMENTUM_PERIOD + 1
+            ).tolist()
             
             df["ATR"] = ta.volatility.AverageTrueRange(
-                high=df["high"], low=df["low"], close=df["close"], window=Config.ATR_PERIOD
+                high=df["high"],
+                low=df["low"],
+                close=df["close"],
+                window=Config.ATR_PERIOD
             ).average_true_range()
             
-            df["RSI"] = ta.momentum.RSIIndicator(close=df["close"], window=Config.RSI_PERIOD).rsi()
-            df["Volume_MA"] = df["volume"].rolling(Config.VOLUME_MA_PERIOD).mean()
+            df["RSI"] = ta.momentum.RSIIndicator(
+                close=df["close"], window=Config.RSI_PERIOD
+            ).rsi()
+            df["Volume_MA"] = df["volume"].rolling(
+                Config.VOLUME_MA_PERIOD
+            ).mean()
             df["MA50"] = df["close"].rolling(Config.TREND_MA_PERIOD).mean()
             
             return (
@@ -152,23 +164,53 @@ class TradingBot:
             drop_threshold = self.last_max_price - (atr * Config.ATR_BUY_MULTIPLIER)
             rise_threshold = self.last_min_price + (atr * Config.ATR_SELL_MULTIPLIER)
 
-            volume_condition = volume > volume_ma * (0.5 if rsi < 25 else Config.VOLUME_BUFFER)
-            trend_condition = price > ma50 * Config.TREND_BUFFER
-            momentum_condition = len(self.prev_prices) >= Config.MOMENTUM_PERIOD+1 and \
-                               all(self.prev_prices[-i] > self.prev_prices[-i-1] for i in range(1, Config.MOMENTUM_PERIOD+1))
-
-            buy_condition = (price <= drop_threshold) and (rsi < Config.RSI_OVERSOLD) and \
-                           volume_condition and trend_condition and momentum_condition
-            
-            sell_condition = (price >= rise_threshold) and (rsi > Config.RSI_OVERBOUGHT) and \
-                            (price > self.entry_price * 1.001 if self.entry_price else False)
-
-            logger.info(
-                f"Индикаторы: ATR={atr:.2f} RSI={rsi:.2f} Volume={volume:.2f}/{volume_ma:.2f} MA50={ma50:.2f}\n"
-                f"Пороги: Покупка <= {drop_threshold:.2f} | Продажа >= {rise_threshold:.2f}\n"
-                f"Тренд: {trend_condition} | Импульс: {momentum_condition} | Объем: {volume_condition}"
+            volume_condition = volume > volume_ma * (
+                0.5 if rsi < 25 else Config.VOLUME_BUFFER
             )
-            return buy_condition and not self.in_position, sell_condition and self.in_position
+            trend_condition = price > ma50 * Config.TREND_BUFFER
+
+            # Momentum condition
+            has_sufficient_data = (
+                len(self.prev_prices) >= Config.MOMENTUM_PERIOD + 1
+            )
+            if has_sufficient_data:
+                prices_are_increasing = all(
+                    self.prev_prices[-i] > self.prev_prices[-i - 1]
+                    for i in range(1, Config.MOMENTUM_PERIOD + 1)
+                )
+                momentum_condition = prices_are_increasing
+            else:
+                momentum_condition = False
+
+            buy_condition = (
+                price <= drop_threshold and
+                rsi < Config.RSI_OVERSOLD and
+                volume_condition and
+                trend_condition and
+                momentum_condition
+            )
+            
+            sell_condition = (
+                price >= rise_threshold and
+                rsi > Config.RSI_OVERBOUGHT and
+                (price > self.entry_price * 1.001 if self.entry_price else False)
+            )
+
+            log_line1 = (
+                f"Индикаторы: ATR={atr:.2f} RSI={rsi:.2f} "
+                f"Volume={volume:.2f}/{volume_ma:.2f} MA50={ma50:.2f}"
+            )
+            log_line2 = (
+                f"Пороги: Покупка <= {drop_threshold:.2f} | "
+                f"Продажа >= {rise_threshold:.2f}"
+            )
+            log_line3 = (
+                f"Тренд: {trend_condition} | Импульс: {momentum_condition} | "
+                f"Объем: {volume_condition}"
+            )
+            logger.info(f"{log_line1}\n{log_line2}\n{log_line3}")
+            return buy_condition and not self.in_position, \
+                   sell_condition and self.in_position
         except Exception as e:
             logger.error(f"Ошибка проверки условий: {e}")
             return False, False
